@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/db/client";
 
-// Every scope the app can grant, with the copy shown to the user in "what
-// SENSE is allowed to do." Keep this list authoritative — Guardian only
-// checks the scope string, but the dashboard reads this for display.
+// Fixed scopes the app can grant, with the copy shown to the user in "what
+// SENSE is allowed to do." Circle-contact nudge scopes are dynamic (one per
+// contact) — see circleNudgeScope() below. Guardian only checks the scope
+// string; the dashboard reads this list for display copy.
 export const CONSENT_SCOPES: { scope: string; detail: string }[] = [
   {
     scope: "companion.sms.caring_contacts",
@@ -13,14 +14,14 @@ export const CONSENT_SCOPES: { scope: string; detail: string }[] = [
     detail: "Send me up to 3 short check-in emails during a risk window, at most one per day, from templates I approved.",
   },
   {
-    scope: "circle.notify.sister",
-    detail: "Ask my sister to check in on me during a risk window (she does the outreach, not SENSE).",
-  },
-  {
     scope: "bridge.schedule",
     detail: "Find open teletherapy slots and pre-fill a booking form for me to confirm myself.",
   },
 ];
+
+export function circleNudgeScope(contactId: string): string {
+  return `circle.notify.${contactId}`;
+}
 
 export async function grantConsent(userId: string, scope: string, detail: string) {
   return prisma.consent.create({

@@ -2,7 +2,7 @@ import "dotenv/config";
 import { prisma } from "../lib/db/client";
 import { encryptField } from "../lib/crypto";
 import { createOrReplaceSafetyPlan } from "../lib/db/safetyPlan";
-import { grantConsent } from "../lib/db/consent";
+import { grantConsent, circleNudgeScope } from "../lib/db/consent";
 
 // Maria's onboarding, done during a calm moment — this is the demo persona.
 // Everything here is something Maria typed and approved herself.
@@ -60,7 +60,7 @@ async function main() {
     ],
   });
 
-  await prisma.circleContact.create({
+  const ana = await prisma.circleContact.create({
     data: {
       userId: maria.id,
       name: "Ana",
@@ -91,7 +91,7 @@ async function main() {
   });
 
   await grantConsent(maria.id, "companion.sms.caring_contacts", "Send me up to 3 short check-in texts during a risk window, at most one per day, from templates I approved.");
-  await grantConsent(maria.id, "circle.notify.sister", "Ask my sister to check in on me during a risk window (she does the outreach, not SENSE).");
+  await grantConsent(maria.id, circleNudgeScope(ana.id), "Ask my sister Ana to check in on me during a risk window (she does the outreach, not SENSE).");
   await grantConsent(maria.id, "bridge.schedule", "Find open teletherapy slots and pre-fill a booking form for me to confirm myself.");
 
   console.log(`Seeded Maria: ${maria.id}`);
