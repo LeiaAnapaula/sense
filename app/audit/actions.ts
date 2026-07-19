@@ -1,9 +1,17 @@
 "use server";
 
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db/client";
 import { getDemoUser } from "@/lib/demoUser";
 import { sendCaringContact } from "@/lib/agents/companion";
+import {
+  surfaceCopingStrategies,
+  suggestContactPerson,
+  requestSessionViaBridge,
+  confirmSessionBooking,
+  cancelSessionDraft,
+} from "@/lib/agents/bridge";
 
 // Demo-only triggers: in the real product, RiskWindow rows come from the
 // Forecast Agent and sends are scheduled automatically once a window opens.
@@ -37,5 +45,56 @@ export async function sendCaringContactNowAction() {
   const user = await getDemoUser();
   const riskWindow = await prisma.riskWindow.findFirst({ where: { userId: user.id, status: "active" }, orderBy: { startDate: "desc" } });
   await sendCaringContact(user.id, riskWindow?.id);
+  revalidatePath("/audit");
+}
+
+async function getBaseUrl(): Promise<string> {
+  const h = await headers();
+  const host = h.get("host") ?? "localhost:3000";
+  const proto = host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https";
+  return `${proto}://${host}`;
+}
+
+async function getActiveRiskWindowId(userId: string): Promise<string | undefined> {
+  const w = await prisma.riskWindow.findFirst({ where: { userId, status: "active" }, orderBy: { startDate: "desc" } });
+  return w?.id;
+}
+
+// Bridge Agent's escalation ladder, one rung per button. Rungs (a) and (b)
+// exist mainly to demonstrate that Guardian requires them before rung (c)
+// can fire autonomously; "I want to talk to someone" below is the
+// user-initiated path that's allowed to skip straight to (c).
+
+export async function surfaceCopingStrategiesAction() {
+  const user = await getDemoUser();
+  await surfaceCopingStrategies(user.id, await getActiveRiskWindowId(user.id));
+  revalidatePath("/audit");
+}
+
+export async function suggestContactPersonAction() {
+  const user = await getDemoUser();
+  await suggestContactPerson(user.id, await getActiveRiskWindowId(user.id));
+  revalidatePath("/audit");
+}
+
+export async function requestSessionAction() {
+  const user = await getDemoUser();
+  const baseUrl = await getBaseUrl();
+  await requestSessionViaBridge(user.id, {
+    riskWindowId: await getActiveRiskWindowId(user.id),
+    userInitiated: true,
+    baseUrl,
+  });
+  revalidatePath("/audit");
+}
+
+export async function confirmSessionAction(actionId: string) {
+  await confirmSessionBooking(actionId);
+  revalidatePath("/audit");
+}
+
+export async function cancelSessionAction(actionId: string) {
+  const user = await getDemoUser();
+  await cancelSessionDraft(user.id, actionId);
   revalidatePath("/audit");
 }

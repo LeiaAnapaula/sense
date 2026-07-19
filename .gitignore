@@ -45,3 +45,6 @@ next-env.d.ts
 *.db
 *.db-journal
 prisma/test.db*
+
+# demo-generated Bridge Agent computer-use screenshots
+/public/bridge/

@@ -61,6 +61,11 @@ async function log(userId: string, actionId: string | null, actor: string, event
   });
 }
 
+// Exposed so other agents (e.g. Bridge's computer-use step) can add an
+// audit trail entry for something that isn't itself a gated Action, without
+// duplicating the append-only write logic.
+export const writeAuditLog = log;
+
 async function findActiveConsent(userId: string, scope: string) {
   return prisma.consent.findFirst({
     where: { userId, scope, granted: true, revokedAt: null },
