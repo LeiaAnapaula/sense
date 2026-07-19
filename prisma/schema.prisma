@@ -1,0 +1,163 @@
+// SENSE data model.
+// Encrypted fields are suffixed `Enc` and are AES-256-GCM ciphertext, see lib/crypto.ts.
+// AuditLog is append-only: application code must never update or delete rows.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String          @id @default(cuid())
+  name              String
+  email             String          @unique
+  preferredLanguage String          @default("en")
+  timezone          String          @default("America/Los_Angeles")
+  createdAt         DateTime        @default(now())
+
+  channels          Channel[]
+  consents          Consent[]
+  safetyPlan        SafetyPlan?
+  circleContacts    CircleContact[]
+  hardDates         HardDate[]
+  moodCheckIns      MoodCheckIn[]
+  riskWindows       RiskWindow[]
+  actions           Action[]
+  auditLogs         AuditLog[]
+}
+
+// A channel the user has (or has not) authorized SENSE to send on.
+model Channel {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  type        String    // "sms" | "email"
+  addressEnc  String    // encrypted phone/email
+  consented   Boolean   @default(false)
+  consentedAt DateTime?
+}
+
+// The single source of truth for "what is SENSE allowed to do." Every Action
+// must reference a Consent row; Guardian fails closed if it does not.
+model Consent {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  scope      String    // e.g. "companion.sms.caring_contacts", "circle.notify.sister", "bridge.schedule"
+  detail     String    // human-readable description shown in "what the system is allowed to do"
+  granted    Boolean   @default(true)
+  grantedAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  actions    Action[]
+
+  @@index([userId, scope])
+}
+
+// Stanley-Brown safety plan. One per user, authored by the user during a calm moment.
+model SafetyPlan {
+  id                     String            @id @default(cuid())
+  userId                 String            @unique
+  user                   User              @relation(fields: [userId], references: [id])
+  warningSignsEnc        String            // encrypted JSON string[]
+  copingStrategiesEnc    String            // encrypted JSON string[] - internal coping strategies
+  socialDistractionsEnc  String            // encrypted JSON string[] - people/settings for distraction
+  reasonsToLiveEnc       String            // encrypted JSON string[]
+  meansSafetyEnc         String            // encrypted JSON string[] - means-safety steps
+  updatedAt              DateTime          @updatedAt
+  messageTemplates       MessageTemplate[]
+}
+
+// User-authored, user-approved Caring Contacts message drafts. The Companion
+// Agent may only personalize these, never invent unapproved content.
+model MessageTemplate {
+  id           String     @id @default(cuid())
+  safetyPlanId String
+  safetyPlan   SafetyPlan @relation(fields: [safetyPlanId], references: [id])
+  bodyEnc      String     // encrypted template text, user-authored/approved
+  language     String     @default("en")
+  approved     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+}
+
+// People to ask for help / professionals & agencies from the safety plan.
+model CircleContact {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  name            String
+  relationship    String
+  role            String   @default("support") // "support" | "professional"
+  channelType     String   // "sms" | "email"
+  addressEnc      String
+  consentedToNudge Boolean @default(false) // did the user consent to Circle Agent nudging this person
+}
+
+// A date the user has marked as hard (birthday, anniversary of a loss, etc.)
+model HardDate {
+  id               String @id @default(cuid())
+  userId           String
+  user             User   @relation(fields: [userId], references: [id])
+  label            String
+  monthDay         String // "MM-DD", recurring annually
+  windowDaysBefore Int    @default(3)
+  windowDaysAfter  Int    @default(4)
+}
+
+// Self-reported mood check-ins the user chose to share with Forecast Agent.
+model MoodCheckIn {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  score     Int      // 1 (low) - 5 (high)
+  noteEnc   String?  // optional encrypted note, only if user chose to share
+  createdAt DateTime @default(now())
+}
+
+// Forecast Agent output: an explainable risk window.
+model RiskWindow {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  startDate         DateTime
+  endDate           DateTime
+  confidence        Float
+  sourceSignalsJson String   // JSON: which consented signals produced this window
+  status            String   @default("upcoming") // "upcoming" | "active" | "closed"
+  actions           Action[]
+}
+
+// Every agent-proposed or agent-taken outbound action, gated by Guardian.
+model Action {
+  id             String      @id @default(cuid())
+  userId         String
+  user           User        @relation(fields: [userId], references: [id])
+  agent          String      // "forecast" | "companion" | "circle" | "bridge" | "guardian"
+  type           String      // "send_message" | "nudge_contact" | "schedule_session" | "surface_resources"
+  channel        String?     // "sms" | "email" | "in_app"
+  contentEnc     String?     // encrypted drafted/sent content
+  consentId      String?
+  consent        Consent?    @relation(fields: [consentId], references: [id])
+  riskWindowId   String?
+  riskWindow     RiskWindow? @relation(fields: [riskWindowId], references: [id])
+  approvalState  String      @default("pending") // "pending" | "guardian_approved" | "guardian_blocked" | "awaiting_human" | "human_approved" | "sent" | "declined"
+  blockReason    String?
+  createdAt      DateTime    @default(now())
+  auditLogs      AuditLog[]
+}
+
+// Append-only audit trail. Never update or delete rows.
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  actionId  String?
+  action    Action?  @relation(fields: [actionId], references: [id])
+  actor     String   // "guardian" | "companion" | "circle" | "bridge" | "forecast" | "user"
+  event     String   // e.g. "guardian.block", "guardian.approve", "action.sent", "consent.revoked"
+  detail    String   // JSON string with human-readable reasoning
+  createdAt DateTime @default(now())
+}
