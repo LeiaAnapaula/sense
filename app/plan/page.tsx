@@ -64,15 +64,32 @@ export default async function PlanPage() {
         {riskWindows.length > 0 && (
           <div className="mt-4 border-t border-zinc-100 pt-3">
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">Risk windows</p>
-            <ul className="space-y-1.5 text-sm text-zinc-700">
-              {riskWindows.map((w) => (
-                <li key={w.id} className="flex items-center justify-between">
-                  <span>
-                    {w.startDate.toDateString()} &ndash; {w.endDate.toDateString()}
-                  </span>
-                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">{w.status}</span>
-                </li>
-              ))}
+            <ul className="space-y-3 text-sm text-zinc-700">
+              {riskWindows.map((w) => {
+                let signals: { signal: string; detail: string }[] = [];
+                try {
+                  signals = JSON.parse(w.sourceSignalsJson);
+                } catch {
+                  signals = [];
+                }
+                return (
+                  <li key={w.id}>
+                    <div className="flex items-center justify-between">
+                      <span>
+                        {w.startDate.toDateString()} &ndash; {w.endDate.toDateString()}
+                      </span>
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                        {w.status} &middot; {Math.round(w.confidence * 100)}% confidence
+                      </span>
+                    </div>
+                    {signals.length > 0 && (
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Why: {signals.map((s) => s.detail).join(" ")}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}

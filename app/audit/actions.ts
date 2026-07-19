@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db/client";
 import { getDemoUser } from "@/lib/demoUser";
 import { sendCaringContact } from "@/lib/agents/companion";
+import { openRiskWindowIfDue } from "@/lib/agents/forecast";
 import {
   surfaceCopingStrategies,
   suggestContactPerson,
@@ -13,30 +14,15 @@ import {
   cancelSessionDraft,
 } from "@/lib/agents/bridge";
 
-// Demo-only triggers: in the real product, RiskWindow rows come from the
-// Forecast Agent and sends are scheduled automatically once a window opens.
-// These let a demo walk through "risk window opens -> Companion sends one
-// caring contact -> a 4th send in the same window is blocked by Guardian"
-// without waiting for a calendar date.
+// This button is the only "demo-only" trigger left on this page: in the
+// real product a scheduled job would call openRiskWindowIfDue() daily so a
+// window opens itself the moment a marked hard date (or a low mood trend)
+// qualifies, instead of waiting for a click. Forecast Agent's own logic —
+// which signals qualify, and why — is unchanged; this just fires it now.
 
 export async function openDemoRiskWindowAction() {
   const user = await getDemoUser();
-  const existing = await prisma.riskWindow.findFirst({ where: { userId: user.id, status: "active" } });
-  if (!existing) {
-    await prisma.riskWindow.create({
-      data: {
-        userId: user.id,
-        startDate: new Date(Date.now() - 2 * 86400000),
-        endDate: new Date(Date.now() + 4 * 86400000),
-        confidence: 0.82,
-        sourceSignalsJson: JSON.stringify([
-          { signal: "hard_date", detail: "Marked birthday, 2 days into a 3-before/4-after window" },
-          { signal: "mood_checkin_trend", detail: "Last 2 self-reported check-ins scored 2/5" },
-        ]),
-        status: "active",
-      },
-    });
-  }
+  await openRiskWindowIfDue(user.id);
   revalidatePath("/audit");
   revalidatePath("/plan");
 }
