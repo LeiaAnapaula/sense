@@ -139,7 +139,7 @@ describe("Guardian: cadence limits", () => {
     });
 
     const attempts = await Promise.all(
-      Array.from({ length: 10 }, (_, i) =>
+      Array.from({ length: 25 }, (_, i) =>
         proposeAction({
           userId: user.id,
           agent: "companion",
@@ -154,6 +154,36 @@ describe("Guardian: cadence limits", () => {
 
     const approved = attempts.filter((a) => a.approved);
     expect(approved.length).toBeLessThanOrEqual(3);
+  });
+
+  it("does not let a burst of concurrent requests race past the daily cap (regression: check-then-act TOCTOU)", async () => {
+    // Found by the red-team suite (lib/evals/runRedTeam.ts): 20 concurrent
+    // sends let 4 through against a cap of 3 before proposeAction() was
+    // serialized per user. Fixed with an in-process per-user queue.
+    const user = await makeUser("cadence-race");
+    await grantConsent(user.id, "companion.sms.caring_contacts", "test");
+    const riskWindow = await prisma.riskWindow.create({
+      data: { userId: user.id, startDate: new Date(), endDate: new Date(Date.now() + 7 * 86400000), confidence: 0.8, sourceSignalsJson: "[]" },
+    });
+
+    const attempts = await Promise.all(
+      Array.from({ length: 25 }, (_, i) =>
+        proposeAction({
+          userId: user.id,
+          agent: "companion",
+          type: "send_message",
+          channel: "sms",
+          content: `Race attempt ${i}. No need to reply. ${CRISIS_FOOTER}`,
+          consentScope: "companion.sms.caring_contacts",
+          riskWindowId: riskWindow.id,
+        })
+      )
+    );
+
+    // maxPerDayPerChannel is 1, so exactly one of these 25 same-day,
+    // same-channel concurrent attempts should land — not more.
+    const approved = attempts.filter((a) => a.approved);
+    expect(approved.length).toBe(1);
   });
 });
 

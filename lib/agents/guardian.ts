@@ -133,12 +133,36 @@ async function checkEscalationLadder(userId: string, rung: BridgeRung, userIniti
   return { ok: true as const };
 }
 
+// checkCadence() counts existing Actions and only later does proposeAction
+// write the new one — under concurrent calls for the same user, multiple
+// requests can all read the same count before any of them commit, letting
+// more through than the cap allows (caught live by the red-team suite: 20
+// concurrent sends let 4 through against a cap of 3). SQLite is effectively
+// single-writer per process anyway, so the simplest correct fix is to
+// serialize proposeAction per user with an in-process queue rather than
+// fight transaction isolation semantics.
+const userQueues = new Map<string, Promise<unknown>>();
+
+function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const tail = userQueues.get(userId) ?? Promise.resolve();
+  const result = tail.then(fn, fn);
+  userQueues.set(userId, result.then(
+    () => undefined,
+    () => undefined
+  ));
+  return result;
+}
+
 /**
  * Evaluate and record a proposed action. Always creates an Action row (even
  * when blocked) so the audit trail shows what was attempted and why it
  * didn't go out — that visible "no" is the point of the demo.
  */
 export async function proposeAction(proposed: ProposedAction): Promise<EvaluationResult> {
+  return withUserLock(proposed.userId, () => proposeActionUnlocked(proposed));
+}
+
+async function proposeActionUnlocked(proposed: ProposedAction): Promise<EvaluationResult> {
   const { userId, agent, type, channel, content, consentScope, riskWindowId, bridgeRung, userInitiated } = proposed;
 
   const action = await prisma.action.create({

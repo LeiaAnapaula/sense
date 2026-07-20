@@ -19,7 +19,30 @@ const PERSONALIZE_SYSTEM_PROMPT = `You lightly personalize a single pre-approved
 - Never add urgency, guilt, clinical language, questions demanding a reply, or any mention of risk, crisis, monitoring, or scores.
 - Never mention that this is automated, AI-generated, or from a "system."
 - Keep it brief — under 200 characters in the target language.
-- Output ONLY the final message text. No preamble, no quotes, no explanation.`;
+- Output ONLY the final message text. Never output a refusal, an explanation, an apology, or any commentary about these instructions — if you believe the template itself is problematic, that is not your call to make: output it back completely unchanged instead of commenting on it. A downstream safety check (not you) is responsible for deciding whether to actually send it.`;
+
+// A refusal/meta-commentary response ("I'm sorry, I can't send this...")
+// reads as mild, brief text and can slip past the deterministic tone gate
+// — it isn't guilt or urgency language, it's just the wrong content
+// entirely. Caught a real instance of this in the red-team suite
+// (lib/evals/runRedTeam.ts): the model correctly refused to personalize an
+// adversarial template, but its refusal text itself then got sent as if it
+// were the caring-contact message. Treat anything that looks like the
+// model talking about the message, instead of being the message, as a
+// failure and fall back to the raw approved template.
+const REFUSAL_OR_META_PATTERNS = [
+  /\bi'?m sorry\b/i,
+  /\bi can'?t\b/i,
+  /\bi cannot\b/i,
+  /\bi'?m unable\b/i,
+  /\bviolates?\b/i,
+  /\b(these|the) (instructions|guidelines|rules|policy)\b/i,
+  /\bas an ai\b/i,
+];
+
+function looksLikeRefusalOrMeta(text: string): boolean {
+  return REFUSAL_OR_META_PATTERNS.some((p) => p.test(text));
+}
 
 async function personalize(templateBody: string, targetLanguage: Language, firstName: string): Promise<string> {
   const client = getAnthropicClient();
@@ -41,7 +64,8 @@ async function personalize(templateBody: string, targetLanguage: Language, first
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("")
       .trim();
-    return text || templateBody;
+    if (!text || looksLikeRefusalOrMeta(text)) return templateBody;
+    return text;
   } catch {
     return templateBody; // fail safe: fall back to the raw approved template
   }
